@@ -2,9 +2,12 @@ import { useState } from "react";
 import { Form, redirect, useActionData, useNavigation } from "react-router-dom";
 import { createOrder } from "../../services/apiRestaurant";
 import Button from "../../ui/Button";
-import { useSelector } from "react-redux";
-import { getCart } from "../cart/cartSlice";
+import { useDispatch, useSelector } from "react-redux";
+import { clearCart, getCart, getTotalCartPrice } from "../cart/cartSlice";
 import EmptyCart from "../cart/EmptyCart";
+import store from "../../store";
+import { formatCurrency } from "../../utils/helpers";
+import { fetchAddress } from "../user/userSlice";
 
 // https://uibakery.io/regex-library/phone-number
 const isValidPhone = (str) =>
@@ -37,12 +40,23 @@ const fakeCart = [
 ];
 function CreateOrder() {
   // const [withPriority, setWithPriority] = useState(false);
+  const [withPriority, setWithPriority] = useState(false);
   const cart = useSelector(getCart);
-
-  const username = useSelector((state) => state.user.username);
+  const totalCartPrice = useSelector(getTotalCartPrice);
+  const priorityPrice = withPriority ? totalCartPrice * 0.2 : 0;
+  const totalPrice = totalCartPrice + priorityPrice;
+  const {
+    username,
+    status: addressStatus,
+    position,
+    address,
+    error: errorAddress,
+  } = useSelector((state) => state.user);
+  const isLoadingAddress = addressStatus === "loading";
   const formErrors = useActionData();
 
   const navigation = useNavigation();
+  const dispatch = useDispatch();
 
   const isSubmitting = navigation.state === "submitting";
   if (!cart.length) return <EmptyCart />;
@@ -75,16 +89,35 @@ function CreateOrder() {
           </div>
         </div>
 
-        <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative mb-5 flex flex-col gap-2 sm:flex-row sm:items-center">
           <label className="sm:basis-40">Address</label>
-          <div className="grow">
+          <div className="grow ">
             <input
               className="input w-full"
               type="text"
               name="address"
               required
+              defaultValue={address}
             />
+            {addressStatus === "error" && (
+              <p className="mt-2 rounded-md bg-red-100 p-2 text-xs text-red-700">
+                {errorAddress}
+              </p>
+            )}
           </div>
+          {!position.latitude &&
+            !position.longitude &&
+            addressStatus !== "error" && (
+              <span className="absolute right-[3px] top-[3px] z-50 sm:right-[5px] sm:top-[5px]">
+                <Button
+                  disabled={isLoadingAddress}
+                  type="small"
+                  onClick={() => dispatch(fetchAddress())}
+                >
+                  get position
+                </Button>
+              </span>
+            )}
         </div>
 
         <div className="mb-12 flex items-center gap-5">
@@ -93,8 +126,8 @@ function CreateOrder() {
             type="checkbox"
             name="priority"
             id="priority"
-            // value={withPriority}
-            // onChange={(e) => setWithPriority(e.target.checked)}
+            value={withPriority}
+            onChange={(e) => setWithPriority(e.target.checked)}
           />
           <label className="font-medium" htmlFor="priority">
             Want to yo give your order priority?
@@ -103,17 +136,29 @@ function CreateOrder() {
 
         <div>
           <input type="hidden" name="cart" value={JSON.stringify(cart)} />
+          <input
+            type="hidden"
+            name="positin"
+            value={
+              position.longitude && position.latitude
+                ? `${position.latitude},${position.longitude}`
+                : ""
+            }
+          />
           <Button
-            disabled={isSubmitting}
+            disabled={isSubmitting || isLoadingAddress}
             type="primary"
             className="diabled:cursor-not-allowed inline-block rounded-full bg-yellow-400 px-4 py-3 font-semibold
              uppercase text-stone-800 transition-all duration-100 hover:bg-yellow-300 
              focus:outline-none focus:ring focus:ring-yellow-300 focus:ring-offset-2 "
           >
-            {isSubmitting ? "subbmitting..." : "Order now"}
+            {isSubmitting
+              ? "subbmitting..."
+              : `Order now from ${formatCurrency(totalPrice)}`}
           </Button>
         </div>
       </Form>
+     
     </div>
   );
 }
@@ -123,7 +168,7 @@ export async function action({ request }) {
   const order = {
     ...data,
     cart: JSON.parse(data.cart),
-    priority: data.priority === "on",
+    priority: data.priority === "true",
   };
 
   const errors = {};
@@ -132,6 +177,7 @@ export async function action({ request }) {
   if (Object.keys(errors).length > 0) return errors;
 
   const newOrder = await createOrder(order);
+  store.dispatch(clearCart());
 
   return redirect(`/order/${newOrder.id}`);
 }
